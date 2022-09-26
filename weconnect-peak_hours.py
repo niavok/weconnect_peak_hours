@@ -88,9 +88,14 @@ def WeConnectInit():
     except errors.AuthentificationError as err:
         PrintAndLog("Login to WeConnect failed")
         PrintAndLog('error' + str(err))
+        return False
     except requests.exceptions.ConnectionError as err:
         PrintAndLog("Connection to WeConnect failed, check internet connection")
         PrintAndLog('error' + str(err))
+        return False
+    
+    return True
+
 
 def Scan():
     if not WeConnectInit():
