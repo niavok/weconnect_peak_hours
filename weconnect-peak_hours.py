@@ -93,13 +93,45 @@ def WeConnectInit():
         PrintAndLog("Connection to WeConnect failed, check internet connection")
         PrintAndLog('error' + str(err))
         return False
-    
-    return True
 
+    return True
 
 def Scan():
     if not WeConnectInit():
         return False
+
+    for vin, vehicle in weConnect.vehicles.items():
+        PrintAndLog(str(vin))
+        PrintAndLog("    * Nickname: " + vehicle.nickname.value)
+        PrintAndLog("    * Model: " + vehicle.model.value)
+        PrintAndLog("    * VIN: " + vehicle.vin.value)
+
+    return True
+
+def Status():
+    if not WeConnectInit():
+        return False
+
+    vehicle = weConnect.vehicles[config.vin]
+    if not vehicle:
+        PrintAndLog("Fail to find vehicle with VIN "+ config.vin)
+
+    PrintAndLog("General")
+    PrintAndLog("    * Nickname: " + vehicle.nickname.value)
+    PrintAndLog("    * Model: " + vehicle.model.value)
+    PrintAndLog("    * VIN: " + vehicle.vin.value)
+
+    PrintAndLog("Climatisation")
+    PrintAndLog("    * Target temperature: "+ str(vehicle.domains["climatisation"]["climatisationSettings"].targetTemperature_C.value) + "°C")
+
+    PrintAndLog("Charge")
+    PrintAndLog("Plug connection state: " + vehicle.domains["charging"]["plugStatus"].plugConnectionState.value.value)
+    PrintAndLog("Preferred charge mode: " + vehicle.domains["charging"]["chargeMode"].preferredChargeMode.value.value)
+
+    PrintAndLog("Charging state: " + vehicle.domains["charging"]["chargingStatus"].chargingState.value.value)
+    PrintAndLog("Charge mode: " + vehicle.domains["charging"]["chargingStatus"].chargeMode.value.value)
+    PrintAndLog("Charge power: " + str(vehicle.domains["charging"]["chargingStatus"].chargePower_kW.value) + " kW")
+    PrintAndLog("charge type: " + vehicle.domains["charging"]["chargingStatus"].chargeType.value.value)
 
     return True
 
