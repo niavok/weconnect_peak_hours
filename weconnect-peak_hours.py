@@ -11,6 +11,7 @@ from weconnect import errors
 from weconnect.elements.control_operation import ControlOperation
 from datetime import datetime, timedelta
 from datetime import time as dtime
+import time
 
 
 class Config:
@@ -134,6 +135,73 @@ def Status():
     PrintAndLog("charge type: " + vehicle.domains["charging"]["chargingStatus"].chargeType.value.value)
 
     return True
+
+def WaitForDateTime(target_datetime):
+    current_datetime = datetime.now()
+    while current_datetime < target_datetime:
+        missing_time = target_datetime - current_datetime
+        PrintAndLog("Wait for "+str(missing_time) + " to " + str(target_datetime))
+        time.sleep(missing_time.total_seconds())
+        current_datetime = datetime.now()
+
+def PrepareChargeStart(start_datetime, limit_datetime):
+    PrintAndLog("Next chart start is "+ start_datetime.str())
+    WaitForDateTime(start_datetime)
+
+    while limit_datetime > datetime.now():
+
+        if not WeConnectInit():
+            PrintAndLog("Fail to connect to start charge. Retry in 5 minutes")
+
+        # TODO check if ignore !!!
+        ignore ?
+
+
+        if not StartCharge():
+            PrintAndLog("Fail to start charge. Retry in 5 minutes")
+        else:
+            break
+
+        time.sleep(5*60) # Wait between retry
+
+def PrepareChargeStop(stop_datetime, limit_datetime):
+    PrintAndLog("Next chart stop is "+ stop_datetime.str())
+    WaitForDateTime(stop_datetime)
+
+
+
+    while limit_datetime > datetime.now():
+
+        if not WeConnectInit():
+            PrintAndLog("Fail to connect to stop charge. Retry in 5 minutes")
+
+        # TODO check if ignore !!!
+        ignore ?
+
+
+        if not StopCharge():
+            PrintAndLog("Fail to stop charge. Retry in 5 minutes")
+        else:
+            break
+
+        time.sleep(5*60) # Wait between retry
+
+def ProcessNextTask():
+    current_datetime = datetime.now()
+    next_charge_start_datetime = GetNextChargeStart(current_datetime)
+    next_charge_end_datetime = GetNextChargeEnd(current_datetime)
+    if(next_charge_start_datetime < next_charge_end_datetime):
+        PrepareChargeStart(next_charge_start_datetime , next_charge_end_datetime)
+    else:
+        PrepareChargeStop(next_charge_end_datetime, next_charge_start_datetime)
+
+def Run():
+    while not Status(): # To check if connection works
+        PrintAndLog("Fail to get run initial status. Retry in 5 minutes")
+        time.sleep(5*60) # Wait between retry
+
+    while True:
+        ProcessNextTask()
 
 ParseArguments()
 LoadConfig()
