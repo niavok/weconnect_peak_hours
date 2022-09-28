@@ -9,6 +9,8 @@ import requests
 from weconnect import weconnect
 from weconnect import errors
 from weconnect.elements.control_operation import ControlOperation
+from weconnect.elements.charging_status import ChargingStatus
+from weconnect.elements.plug_status import PlugStatus
 from datetime import datetime, timedelta
 from datetime import time as dtime
 import time
@@ -79,9 +81,11 @@ def LoadConfig():
     return True
 
 weConnect = {}
+vehicle = {}
 
 def WeConnectInit():
     global weConnect
+    global vehicle
     try:
         weConnect = weconnect.WeConnect(username=config.login, password=config.password, updateAfterLogin=False, loginOnInit=False)
         weConnect.login()
@@ -94,6 +98,10 @@ def WeConnectInit():
         PrintAndLog("Connection to WeConnect failed, check internet connection")
         PrintAndLog('error' + str(err))
         return False
+    if config.vin in weConnect.vehicles:
+        vehicle = weConnect.vehicles[config.vin]
+    else:
+        vehicle = None
 
     return True
 
@@ -113,9 +121,9 @@ def Status():
     if not WeConnectInit():
         return False
 
-    vehicle = weConnect.vehicles[config.vin]
     if not vehicle:
         PrintAndLog("Fail to find vehicle with VIN "+ config.vin)
+        return False
 
     PrintAndLog("General")
     PrintAndLog("    * Nickname: " + vehicle.nickname.value)
@@ -144,8 +152,74 @@ def WaitForDateTime(target_datetime):
         time.sleep(missing_time.total_seconds())
         current_datetime = datetime.now()
 
+def IgnoreStartCharge():
+    if not vehicle:
+        PrintAndLog("Fail to find vehicle with VIN "+ config.vin)
+
+    target_temperature = vehicle.domains["climatisation"]["climatisationSettings"].targetTemperature_C.value
+    if target_temperature in config.ignore_temperatures:
+        PrintAndLog("Skip start charge: target temperature in ignore list,  ("+ str(target_temperature) + "°C)")
+        return True
+
+    if vehicle.domains["charging"]["plugStatus"].plugConnectionState.value is not PlugStatus.PlugConnectionState.CONNECTED:
+        PrintAndLog("Skip start charge: car is not ready for charging")
+        return True
+
+    if vehicle.domains["charging"]["chargingStatus"].chargingState.value is not ChargingStatus.ChargingState.READY_FOR_CHARGING:
+        PrintAndLog("Skip start charge: car is not ready for charging")
+        return True
+
+    return False
+
+
+def IgnoreStopCharge():
+    if not vehicle:
+        PrintAndLog("Fail to find vehicle with VIN "+ config.vin)
+
+    target_temperature = vehicle.domains["climatisation"]["climatisationSettings"].targetTemperature_C.value
+    if target_temperature in config.ignore_temperatures:
+        PrintAndLog("Skip stop charge: target temperature in ignore list,  ("+ str(target_temperature) + "°C)")
+        return True
+
+    if vehicle.domains["charging"]["plugStatus"].plugConnectionState.value is not PlugStatus.PlugConnectionState.CONNECTED:
+        PrintAndLog("Skip stop charge: car is not connected")
+        return True
+
+    if vehicle.domains["charging"]["chargingStatus"].chargingState.value is not ChargingStatus.ChargingState.CHARGING:
+        PrintAndLog("Skip stop charge: car is not charging")
+        return True
+
+    if vehicle.domains["charging"]["chargingStatus"].chargeType.value is not ChargingStatus.ChargeType.AC:
+        PrintAndLog("Skip stop charge: not charging in AC ("+ vehicle.domains["charging"]["chargingStatus"].chargeType.value.valule+")")
+        return True
+
+    if vehicle.domains["charging"]["chargingStatus"].chargePower_kW.value > config.ignore_min_power:
+        PrintAndLog("Skip stop charge: charging faster than ignore limit ("+ str(vehicle.domains["charging"]["chargingStatus"].chargePower_kW.value)+" kW)")
+        return True
+
+    return False
+
+def StartCharge():
+    global vehicle
+    PrintAndLog("Start charge. Wait 30s before check charge status")
+    vehicle.controls.chargingControl.value = ControlOperation.START
+    time.sleep(30)
+    weConnect.update()
+    vehicle = weConnect.vehicles[config.vin]
+    return vehicle.domains["charging"]["chargingStatus"].chargingState.value is ChargingStatus.ChargingState.CHARGING
+
+def StopCharge():
+    global vehicle
+    PrintAndLog("Stop charge. Wait 30s before check charge status")
+    vehicle.controls.chargingControl.value = ControlOperation.STOP
+    time.sleep(30)
+    weConnect.update()
+    vehicle = weConnect.vehicles[config.vin]
+    return vehicle.domains["charging"]["chargingStatus"].chargingState.value is not ChargingStatus.ChargingState.CHARGING
+
+
 def PrepareChargeStart(start_datetime, limit_datetime):
-    PrintAndLog("Next chart start is "+ start_datetime.str())
+    PrintAndLog("Next chart start is "+ str(start_datetime))
     WaitForDateTime(start_datetime)
 
     while limit_datetime > datetime.now():
@@ -153,43 +227,56 @@ def PrepareChargeStart(start_datetime, limit_datetime):
         if not WeConnectInit():
             PrintAndLog("Fail to connect to start charge. Retry in 5 minutes")
 
-        # TODO check if ignore !!!
-        ignore ?
-
+        if IgnoreStartCharge():
+            break
 
         if not StartCharge():
             PrintAndLog("Fail to start charge. Retry in 5 minutes")
         else:
+            PrintAndLog("Start charge success")
             break
 
         time.sleep(5*60) # Wait between retry
 
 def PrepareChargeStop(stop_datetime, limit_datetime):
-    PrintAndLog("Next chart stop is "+ stop_datetime.str())
+    PrintAndLog("Next chart stop is "+ str(stop_datetime))
     WaitForDateTime(stop_datetime)
-
-
 
     while limit_datetime > datetime.now():
 
         if not WeConnectInit():
             PrintAndLog("Fail to connect to stop charge. Retry in 5 minutes")
 
-        # TODO check if ignore !!!
-        ignore ?
-
+        if IgnoreStopCharge():
+            break;
 
         if not StopCharge():
             PrintAndLog("Fail to stop charge. Retry in 5 minutes")
         else:
+            PrintAndLog("Stop charge success")
             break
 
         time.sleep(5*60) # Wait between retry
 
+def GetNextChargeStartStop(current_datetime, start_or_stop):
+    current_time = current_datetime.time()
+    next_charge_datetime = None
+    for charge_range in config.charging_ranges:
+        start_time = dtime.fromisoformat(charge_range[start_or_stop])
+        if start_time >= current_time:
+            # charge start/stop the same day
+            charge_datetime = datetime.combine(current_datetime.date(), start_time)
+        else:
+            charge_datetime = datetime.combine(current_datetime.date() + timedelta(days=1), start_time)
+
+        if not next_charge_datetime or charge_datetime < next_charge_datetime:
+            next_charge_datetime = charge_datetime
+    return next_charge_datetime
+
 def ProcessNextTask():
     current_datetime = datetime.now()
-    next_charge_start_datetime = GetNextChargeStart(current_datetime)
-    next_charge_end_datetime = GetNextChargeEnd(current_datetime)
+    next_charge_start_datetime = GetNextChargeStartStop(current_datetime, 0)
+    next_charge_end_datetime = GetNextChargeStartStop(current_datetime, 1)
     if(next_charge_start_datetime < next_charge_end_datetime):
         PrepareChargeStart(next_charge_start_datetime , next_charge_end_datetime)
     else:
