@@ -47,7 +47,7 @@ def PrintAndLog(message : str, doPrint = True):
 
 def ParseArguments():
     parser = argparse.ArgumentParser(description='We connect charge control to avoid peak hours.')
-    parser.add_argument('command', choices={'scan', 'status', 'run'}, default='run',
+    parser.add_argument('command', choices={'scan', 'status', 'run', 'start', 'stop'}, default='run',
                     help='scan to list the cars, status to display the current state, run to execute the car.')
     parser.add_argument('--config', '-c', default='config.cfg')
 
@@ -136,6 +136,8 @@ def Status():
     PrintAndLog("Charge")
     PrintAndLog("Plug connection state: " + vehicle.domains["charging"]["plugStatus"].plugConnectionState.value.value)
     PrintAndLog("Preferred charge mode: " + vehicle.domains["charging"]["chargeMode"].preferredChargeMode.value.value)
+    PrintAndLog("Current SoC: " + str(vehicle.domains["charging"]["batteryStatus"].currentSOC_pct.value) + " %")
+    PrintAndLog("Target SoC: " + str(vehicle.domains["charging"]["chargingSettings"].targetSOC_pct.value) + " %")
 
     PrintAndLog("Charging state: " + vehicle.domains["charging"]["chargingStatus"].chargingState.value.value)
     PrintAndLog("Charge mode: " + vehicle.domains["charging"]["chargingStatus"].chargeMode.value.value)
@@ -169,6 +171,10 @@ def IgnoreStartCharge():
         PrintAndLog("Skip start charge: car is not ready for charging")
         return True
 
+    if vehicle.domains["charging"]["batteryStatus"].currentSOC_pct.value >=  vehicle.domains["charging"]["chargingSettings"].targetSOC_pct.value:
+        PrintAndLog("Skip start charge: target SOC is reach")
+        return True
+
     return False
 
 
@@ -200,28 +206,38 @@ def IgnoreStopCharge():
     return False
 
 def StartCharge():
-    global vehicle
-    PrintAndLog("Start charge. Wait 30s before check charge status")
-    vehicle.controls.chargingControl.value = ControlOperation.START
-    time.sleep(30)
-    weConnect.update()
-    vehicle = weConnect.vehicles[config.vin]
-    return vehicle.domains["charging"]["chargingStatus"].chargingState.value is ChargingStatus.ChargingState.CHARGING
+    try:
+        global vehicle
+        PrintAndLog("Start charge. Wait 30s before check charge status")
+        vehicle.controls.chargingControl.value = ControlOperation.START
+        time.sleep(30)
+        weConnect.update()
+        vehicle = weConnect.vehicles[config.vin]
+        return vehicle.domains["charging"]["chargingStatus"].chargingState.value is ChargingStatus.ChargingState.CHARGING
+    except Exception as err:
+        PrintAndLog("Control command failed")
+        PrintAndLog('error' + str(err))
+        return False
 
 def StopCharge():
-    global vehicle
-    PrintAndLog("Stop charge. Wait 30s before check charge status")
-    vehicle.controls.chargingControl.value = ControlOperation.STOP
-    time.sleep(30)
-    weConnect.update()
-    vehicle = weConnect.vehicles[config.vin]
-    return vehicle.domains["charging"]["chargingStatus"].chargingState.value is not ChargingStatus.ChargingState.CHARGING
-
+    try:
+        global vehicle
+        PrintAndLog("Stop charge. Wait 30s before check charge status")
+        vehicle.controls.chargingControl.value = ControlOperation.STOP
+        time.sleep(30)
+        weConnect.update()
+        vehicle = weConnect.vehicles[config.vin]
+        return vehicle.domains["charging"]["chargingStatus"].chargingState.value is not ChargingStatus.ChargingState.CHARGING
+    except Exception as err:
+        PrintAndLog("Control command failed")
+        PrintAndLog('error' + str(err))
+        return False
 
 def PrepareChargeStart(start_datetime, limit_datetime):
     PrintAndLog("Next chart start is "+ str(start_datetime))
     WaitForDateTime(start_datetime)
 
+    Status()
     while limit_datetime > datetime.now():
 
         if not WeConnectInit():
@@ -234,14 +250,17 @@ def PrepareChargeStart(start_datetime, limit_datetime):
             PrintAndLog("Fail to start charge. Retry in 5 minutes")
         else:
             PrintAndLog("Start charge success")
+            Status()
             break
 
         time.sleep(5*60) # Wait between retry
+
 
 def PrepareChargeStop(stop_datetime, limit_datetime):
     PrintAndLog("Next chart stop is "+ str(stop_datetime))
     WaitForDateTime(stop_datetime)
 
+    Status()
     while limit_datetime > datetime.now():
 
         if not WeConnectInit():
@@ -254,6 +273,7 @@ def PrepareChargeStop(stop_datetime, limit_datetime):
             PrintAndLog("Fail to stop charge. Retry in 5 minutes")
         else:
             PrintAndLog("Stop charge success")
+            Status()
             break
 
         time.sleep(5*60) # Wait between retry
@@ -303,6 +323,10 @@ if config.loaded:
             PrintAndLog("Fail to scan")
     elif config.command == "run":
             Run()
+    elif config.command == "start":
+            PrepareChargeStart(datetime.now(), datetime.now() + timedelta(seconds=10))
+    elif config.command == "stop":
+            PrepareChargeStop(datetime.now(), datetime.now() + timedelta(seconds=10))
     elif config.command == "status":
         if not Status():
             PrintAndLog("Fail to get status")
