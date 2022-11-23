@@ -98,6 +98,14 @@ def WeConnectInit():
         PrintAndLog("Connection to WeConnect failed, check internet connection")
         PrintAndLog('error' + str(err))
         return False
+    except errors.RetrievalError as err:
+        PrintAndLog("Connection to fetch data from WeConnect, serveur error")
+        PrintAndLog('error' + str(err))
+        return False
+    except Exception as err:
+        PrintAndLog("WeConnectInit failed with unknown error")
+        PrintAndLog('error' + str(err))
+        return False
     if config.vin in weConnect.vehicles:
         vehicle = weConnect.vehicles[config.vin]
     else:
